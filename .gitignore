@@ -11,3 +11,6 @@ testfile.txt
 server/test
 server/socket_test.sh
 server/english.txt
+aesdsocket
+server/aesdsocket
+server/valgrind-out.txt
