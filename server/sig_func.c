@@ -23,34 +23,35 @@
 #include "aesdsocket.h"
 
 void signal_handler(int signum) {
+
     USER_LOGGING("%s", "Caught signal, exiting");
-    //USER_LOGGING("%s:%d", "hello", 30);
-#if 0
-    exit(EXIT_SUCCESS);
-#else
     signal_sign = 1;
+
     return;
-#endif
 }
 
-int signal_setup(int amount, ...) {
+void signal_setup(int amount, ...) {
 
-    int rc, signum;
+    int signum;
     va_list ap;
-    struct sigaction sig_info;
+    struct sigaction sig_info = {0};
 
+    sigemptyset(&sig_info.sa_mask);
     sig_info.sa_handler = signal_handler;
 
     va_start(ap, amount);
-    while (amount > 0) {
+
+    while (amount-- > 0) {
+
         signum = va_arg(ap, int);
-        rc = sigaction(signum, &sig_info, NULL);
-        if (rc == -1) {
-            break;
-        }
-        amount--;
+        sigaddset(&sig_info.sa_mask, signum);
+
+        if (sigaction(signum, &sig_info, NULL) == -1) {
+            perror("sigaction ");
+		}
     }
+
     va_end(ap);
 
-    return rc;
+    return;
 }

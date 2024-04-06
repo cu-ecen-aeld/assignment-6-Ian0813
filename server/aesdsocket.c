@@ -1,12 +1,11 @@
 /*
  * =====================================================================================
  *
- *       Filename:  aesdsocket.c
- *
- *    Description:  Assignment 5 part 1
+ *       Filename:  aesdsocket.c *
+ *    Description:  Assignment 6 part 1
  *
  *        Version:  1.0
- *        Created:  2023年04月12日 23時42分40秒
+ *        Created:  2024 
  *       Revision:  none
  *       Compiler:  gcc
  *
@@ -31,7 +30,10 @@
 #include <errno.h>
 #include <pthread.h>
 
-#define BSIZE (1024 * 30)
+#define BSIZE (BUFSIZ * 3)
+#define FILE_NAME "/var/tmp/aesdsocketdata"
+#define LISTEN_MAX 5
+#define TIME_PERIOD 10
 
 /* Global variable */
 int signal_sign = 0;
@@ -39,61 +41,25 @@ int signal_sign = 0;
 /* function prototype */
 int signal_setup(int, ...);
 
-/* A structure contains network fd and file fd. */
-struct fdset {
-    int sock; 
+/* A structure contains and file fd and a mutex object. */
+static struct {
+    pthread_mutex_t *mutex;
     int fd;
-};
+    timer_t timer_id;
+} timer_data = {.mutex = NULL, .fd = 0, .timer_id = 0};
 
-int tcp_socket(int domain, int type, int protocol, struct sockaddr_in addr, int reuse) {
-
-    int sockfd, rc, on = 1;
-    sockfd = socket(domain, type, protocol);
-    if (sockfd == -1) {
-        ERROR_HANDLER(socket);
-    }
-
-    if (reuse == true) {
-        // Set socket option to enable reuse the local address
-        rc = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const void *) &on, (socklen_t) sizeof(on));
-        if (rc == -1) {
-            ERROR_HANDLER(setsockopt);
-        }
-    }
-
-    rc = bind(sockfd, (struct sockaddr *) &addr, sizeof(struct sockaddr));
-    if (rc == -1) {
-        ERROR_HANDLER(bind);
-    }
-
-    return sockfd;
-}
-
-int tcp_incoming_check(int sockfd, struct sockaddr_in *client, socklen_t addrlen) {
-
-    int rc, acceptfd, tcp_select(int sock);
-
-    rc = listen(sockfd, 5);
-    if (rc == -1) {
-        ERROR_HANDLER(listen);
-    }
-  
-    rc = tcp_select(sockfd);
-
-    if (rc == -1) {
-        printf("tcp_select no pick up.\n");
-        return -1;
-    } else if (rc == 0) {
-        printf("select timeout.\n");
-        return 0;
-    }
-
-    acceptfd = accept(sockfd, (struct sockaddr *) client, &addrlen);
-    if (acceptfd == -1) {
-        ERROR_HANDLER(accept);
-    }
-    return acceptfd;
-}
+typedef struct thread {
+    struct sockaddr_in conn_addr;
+    ssize_t (*recv)(int sock, void *buf, size_t length, int flags);
+    ssize_t (*send)(int sock, const void *buf, size_t length, int flags);
+    ssize_t (*write)(int fd, const void *buf, size_t count);
+    ssize_t (*read)(int fd, void *buf, size_t count);
+    pthread_mutex_t *mutex;
+    pthread_t tid;
+    struct thread *next;
+    int conn_sock;
+    int fd;
+} tcp_thread;
 
 void tcp_shutdown(int sockfd, int how) {
 
@@ -112,69 +78,6 @@ void tcp_close (int sockfd) {
         ERROR_HANDLER(close);
     }
     return;
-}
-
-int tcp_receive(int acceptfd, char *buffer, int size) {
-
-    //printf("[%s] entered\n", __func__);
-
-    int rc, tcp_select(int sock);
-    rc = tcp_select(acceptfd);
-    rc = recv(acceptfd, buffer, size, 0); 
-
-    if (rc < 0) {
-        ERROR_HANDLER(recv);
-    } else if (rc == 0) {
-        USER_LOGGING("The client-side might was closed, rc: %d\n", rc);
-    }
-    return rc;
-}
-
-static int check_newline(char *buf) {
-
-    if (strchr(buf, '\n')) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
-int tcp_send(int acceptfd, char *buffer, int size) {
-
-    int rc;
-    rc = send(acceptfd, buffer, size, 0);
-    if (rc != size) {
-        ERROR_HANDLER(send);
-    }
-    return rc;
-}
-
-void *thread_tcp_echoback (void *arg) {
-
-    int rc = 0;
-    char sbuffer[BSIZE] = {0}, rbuffer[BSIZE] = {0};
-    struct fdset *tcpfd = (struct fdset *) arg;
-
-    do {
-        rc = tcp_receive(tcpfd->sock, rbuffer, sizeof(rbuffer));
-        if (rc > 0) {
-            if (strchr(rbuffer, '\n')) {
-                //fprintf(stdout, "receive: %s", rbuffer);
-                rc = file_write(tcpfd->fd, rbuffer, rc);
-                fsync(tcpfd->fd);
-                rc = file_read(tcpfd->fd, sbuffer, file_size(tcpfd->fd));
-                fsync(tcpfd->fd);
-                rc = tcp_send(tcpfd->sock, sbuffer, strlen(sbuffer));
-                file_seek(tcpfd->fd, 0, SEEK_SET);
-                memset(rbuffer, 0, sizeof(rbuffer));
-                memset(sbuffer, 0, sizeof(sbuffer));
-            }
-        } else if (rc <= 0) {
-            break;
-        }
-    } while (1);
-
-    return NULL;
 }
 
 void tcp_set_nonblock(int sockfd, int invert) {
@@ -231,98 +134,281 @@ int tcp_getopt(int argc, char *argv[]) {
     return false;
 } 
 
-int main(int argc, char *argv[]) {
+static void fill_sockaddr(struct sockaddr_in *addr) {
 
-    int sockfd, acceptfd, rc, datafd, on = 1, size;
-    pid_t id = 0;
-    pthread_t pid;
-    struct sockaddr_in serv, client;
-    struct fdset *tcpfd = NULL;
-    socklen_t addrlen;
-    
-    memset(&serv, 0 ,sizeof(struct sockaddr));
-    serv.sin_addr.s_addr = htonl(INADDR_ANY);
-    serv.sin_port = htons(9000);
-    serv.sin_family = AF_INET;
-    tcpfd = (struct fdset *) malloc(sizeof(struct fdset));
+    memset(addr, 0, sizeof(struct sockaddr_in));
 
-    // Set syslog configuration up.
-    openlog(NULL, LOG_PID, LOG_USER);
+    addr->sin_addr.s_addr = htonl(INADDR_ANY);
+    addr->sin_port = htons(9000);
+    addr->sin_family = AF_INET;
 
-    // Create a file to write the data received from a client.
-    file_delete("/var/tmp/aesdsocketdata");
-    datafd = file_create("/var/tmp/aesdsocketdata", 2, O_RDWR, O_CREAT);
-    tcpfd->fd = datafd;
+    return;
+}
 
-    sockfd = tcp_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP, serv, true);
+static int tcp_socket(void) {
+
+    int sockfd, rc;
+    struct sockaddr_in tcp_addr = {0};
+    int on = 1;
+
+    fill_sockaddr(&tcp_addr);
+
+    sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sockfd == -1) {
         ERROR_HANDLER(socket);
     }
-    tcp_set_nonblock(sockfd, 0);
 
-    rc = tcp_getopt(argc, argv);
-    if (rc == false) {
-        printf("No any options.\n");
+    // Set socket option to enable reuse the local address
+    rc = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const void *) &on, (socklen_t) sizeof(on));
+
+    if (rc == -1) {
+        ERROR_HANDLER(setsockopt);
+    } else {
+        fprintf(stdout, "[%s] set SO_REUSEADDR success.\n", __func__); 
     }
 
-    if (id != 0) {
-        perror("daemon ");
-        exit(EXIT_SUCCESS);
+    rc = bind(sockfd, (struct sockaddr *) &tcp_addr, sizeof(struct sockaddr));
+    if (rc == -1) {
+        ERROR_HANDLER(bind);
+        fprintf(stderr, "[%s] exit caused by call to bind.\n", __func__);
+        exit(EXIT_FAILURE);
     }
-    while (1) {
 
-        addrlen = sizeof(struct sockaddr);
-        acceptfd = tcp_incoming_check(sockfd, &client, addrlen);
-        if (acceptfd == 0) {
-            break;
+    rc = listen(sockfd, LISTEN_MAX);
+    if (rc == -1) {
+        ERROR_HANDLER(listen);
+    }
+
+    return sockfd;
+}
+
+static int tcp_getfd(void) {
+
+    int fd = 0;
+
+    file_delete(FILE_NAME);
+    if ((fd = open(FILE_NAME, O_CREAT | O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO)) == -1) {
+        perror("open ");
+    }
+    return fd;
+}    
+
+static void timer_writer(int sig) {
+
+    struct tm *time_info = NULL;
+    char time_stamp[BUFSIZ] = {0};
+    //tcp_thread *thread = (tcp_thread *) args;
+    ssize_t rc = 0;
+    struct timespec now = {0};
+    time_t diff = 0;
+
+    fprintf(stdout, "[%s] entered.\n", __func__);
+
+    clock_gettime(CLOCK_REALTIME, &now);
+
+    time_info = gmtime(&now.tv_sec);
+    strftime(time_stamp, BUFSIZ * sizeof(char), "timestamp:%a, %d %b %Y %T %z\n", time_info);
+
+    if (pthread_mutex_lock(timer_data.mutex)) {
+        perror("pthread_mutex_lock ");
+    }
+
+    if (lseek(timer_data.fd, 0, SEEK_END) == -1) {
+        perror("lseek "); 
+    }
+
+    rc = write(timer_data.fd, time_stamp, strlen(time_stamp));
+    syslog(LOG_INFO, "[%s] write %ld byted to aesdsocketdata.\n", __func__, rc);
+
+    if (pthread_mutex_unlock(timer_data.mutex)) {
+        perror("pthread_mutex_unlokc ");
+    }
+
+    return;
+}
+
+static void timer_setup(int sig, void (*func)(int)) {
+
+    struct sigaction sig_info = {0};
+    struct sigevent event = {0};
+    struct itimerspec time_val = {0};
+
+    sigemptyset(&sig_info.sa_mask);
+    sigaddset(&sig_info.sa_mask, sig);
+
+    sig_info.sa_handler = func;
+
+    if (sigaction(sig, &sig_info, NULL)) {
+        perror("sigaction ");
+    }
+
+    event.sigev_signo = sig;
+    event.sigev_notify = SIGEV_SIGNAL;
+
+    if (timer_create(CLOCK_REALTIME, &event, &timer_data.timer_id)) {
+        perror("timer_create ");
+    }
+
+    time_val.it_value.tv_sec = TIME_PERIOD;
+    time_val.it_interval.tv_sec = TIME_PERIOD;
+
+    if (timer_settime(timer_data.timer_id, 0, &time_val, NULL)) {
+        perror("timer_settime ");
+    }
+
+    syslog(LOG_INFO, "[%s] timer set up success.", __func__);
+
+    return;
+}
+
+static void *tcp_transceiver(void *args) {
+
+    struct thread *thread_info = (struct thread *) args;
+    char buffer[BUFSIZ] = {0}; 
+    ssize_t buflen = 0; 
+
+    fprintf(stdout, "[%s] entered.\n", __func__);
+
+    buflen = thread_info->recv(thread_info->conn_sock, buffer, sizeof(buffer), 0);
+
+    if (buflen <= 0) {
+        perror("recv ");
+        return NULL;
+    }
+
+    if (pthread_mutex_lock(thread_info->mutex) != 0) {
+        perror("pthread_mutex_lock ");
+        return NULL;
+    }
+
+    lseek(thread_info->fd, 0, SEEK_END);
+    if (thread_info->write(thread_info->fd, buffer, buflen) != buflen) {
+        perror("write");
+    }
+
+    if (pthread_mutex_unlock(thread_info->mutex) != 0) {
+        perror("pthread_mutex_unlock ");
+        return NULL;
+    }
+
+    memset(buffer, 0, sizeof(buffer));
+    lseek(thread_info->fd, 0, SEEK_SET);
+
+    if (thread_info->read(thread_info->fd, buffer, sizeof(buffer)) == -1) {
+        perror("read ");
+    }
+
+    //printf("read buffer: %s", buffer);
+
+    if (thread_info->send(thread_info->conn_sock, buffer, strlen(buffer), 0) == -1) {
+        perror("send ");
+        return NULL;
+    }
+
+    return NULL;
+}
+
+tcp_thread *thread_alloc(tcp_thread *head, int conn_sock, int fd, void *mutex) {
+
+    if (head == NULL) {
+        head = (tcp_thread *) malloc(sizeof(tcp_thread));    
+        head->write = write;
+        head->read = read;
+        head->send = send;
+        head->recv = recv;
+        head->conn_sock = conn_sock;
+        head->fd = fd;
+        head->mutex = (pthread_mutex_t *) mutex;
+        head->next = NULL;
+    } else {
+        head->next = thread_alloc(head->next, conn_sock, fd, mutex);
+    }
+    return head;
+}
+
+tcp_thread *thread_lastone(tcp_thread *node) {
+
+    while (node->next != NULL) {
+        node = node->next;
+    }
+    return node;
+}
+
+static void thread_release(tcp_thread *head) {
+
+    tcp_thread *temp = NULL;
+
+    while (head != NULL) {
+
+        if (pthread_join(head->tid, NULL)) {
+            perror("pthread_join ");
         }
 
-        //printf("Accepted connection from %s:%d", inet_ntoa(client.sin_addr), ntohs(client.sin_port));
-        USER_LOGGING("Accepted connection from %s", inet_ntoa(client.sin_addr));
-        tcpfd->sock = acceptfd;
+        temp = head;
+        head = head->next;
 
-        rc = pthread_create(&pid, NULL, thread_tcp_echoback, (void *) tcpfd);
-        if (rc == -1) {
-            ERROR_HANDLER(pthread_create);
+        tcp_close(temp->conn_sock);
+        syslog(LOG_INFO, "Closed connection from %s", inet_ntoa(temp->conn_addr.sin_addr));
+        free(temp);
+    }
+    return;
+}
+
+int main(int argc, char *argv[]) {
+
+    int tcp_sock = 0, conn_sock = 0, fd = 0, buflen = 0;
+    int rc = 0;
+    struct sockaddr_in conn_addr = {0};
+    socklen_t addr_len = sizeof(struct sockaddr);
+    pthread_mutex_t mutex;
+    tcp_thread *head = NULL;
+
+    tcp_getopt(argc, argv);
+
+    openlog(NULL, LOG_PID, LOG_USER);
+
+    pthread_mutex_init(&mutex, NULL);
+
+    fd = tcp_getfd();
+
+    timer_data.mutex = &mutex;
+    timer_data.fd = fd;
+
+    timer_setup(SIGUSR1, timer_writer);
+
+    signal_setup(2, SIGTERM, SIGINT);
+
+    tcp_sock = tcp_socket();
+
+    while (!signal_sign) {
+
+        //fprintf(stdout, "Waiting for incoming connection\n");              
+        conn_sock = accept(tcp_sock, (struct sockaddr *) &conn_addr, &addr_len);
+
+        if (conn_sock == -1) {
+            perror("accept ");
+        } else {
+            syslog(LOG_INFO, "Accepted connection from %s", inet_ntoa(conn_addr.sin_addr));
+            //fprintf(stdout, "Accepted connection from %s\n", inet_ntoa(conn_addr.sin_addr));
         }
 
-        rc = pthread_join(pid, NULL);
-        if (rc == -1) {
-            ERROR_HANDLER(pthread_create);
+        head = thread_alloc(head, conn_sock, fd, &mutex);
+        memcpy(&head->conn_addr, &conn_addr, sizeof(struct sockaddr_in));
+
+        if (pthread_create(&(thread_lastone(head)->tid), NULL, tcp_transceiver, (void *) thread_lastone(head))) {
+            perror("pthread_create ");
         }
     }
 
-#if 0
-    size = file_size(pathname);
-    ptr = (char *) malloc(size + 1);
-    file_seek(datafd, 0, SEEK_SET);
-    do {
-        rc = file_read(datafd, ptr, size);
-    } while (rc > 0 && tcp_send(acceptfd, ptr, rc));
-#endif
+    //printf("Receive complete, %d.\n", __LINE__);
 
-    USER_LOGGING("Closed connection from %s", inet_ntoa(client.sin_addr));
-    tcp_close(acceptfd);
+    thread_release(head);
 
-    rc = signal_setup(2, SIGINT, SIGTERM);
-    tcp_set_nonblock(sockfd, 1);
-    if ((rc = tcp_incoming_check(sockfd, &client, sizeof(struct sockaddr)))> 0) {
-       acceptfd = rc;
-    }
+    close(fd);
+    tcp_close(tcp_sock);
+    timer_delete(timer_data.timer_id);
+    pthread_mutex_destroy(&mutex);
+    fprintf(stdout, "Process exit.\n");
 
-    while (1) {
-        sleep(1);
-        printf("Waiting for SIGINT or SIGTERM.\n");
-        if (signal_sign) {
-            break;
-        }
-    }
-
-    tcp_close(acceptfd);
-    tcp_close(sockfd);
-    close(tcpfd->fd);
-    free(tcpfd);
-    closelog();
-
-    return 0;
+    return EXIT_SUCCESS;
 }

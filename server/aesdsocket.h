@@ -26,8 +26,9 @@
 
 #ifndef AESD_SCOKET
 #define AESD_SOCKET 
-#define ERROR_HANDLER(func) { perror(#func); exit(EXIT_FAILURE); }
+//#define ERROR_HANDLER(func) { perror(#func); exit(EXIT_FAILURE); }
+#define ERROR_HANDLER(func) { perror(#func); }
 //#define USER_LOGGING(format, addr, port) syslog(LOG_DEBUG, format, addr, port)
-#define USER_LOGGING(format, addr) syslog(LOG_DEBUG, format, addr)
+#define USER_LOGGING(format, ...) syslog(LOG_DEBUG, format, __VA_ARGS__)
 extern int signal_sign;
 #endif

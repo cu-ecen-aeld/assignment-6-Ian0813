@@ -37,7 +37,7 @@ int file_seek(int fd, off_t offset, int whence) {
     rc = (int) lseek(fd, offset, whence);
     if (rc == -1) {
         //fprintf(stdout, "err: %d, %s\n", errno, strerror(errno));
-        ERROR_HANDLER()
+        ERROR_HANDLER();
     }
     return rc;
 }
@@ -85,11 +85,14 @@ void file_delete(char *file) {
 
     int rc = 0;
     struct stat status;
+
     memset(&status, 0, sizeof(struct stat));
 
     rc = stat(file, &status);
     if (rc != -1) {
         remove(file);
-    }
+    } else {
+        perror("stat ");
+	}
     return;
 }
