@@ -16,3 +16,7 @@ server/aesdsocket
 server/valgrind-out.txt
 practice
 actions-runner
+build
+.vscode
+valgrind-out.txt
+test.sh.log

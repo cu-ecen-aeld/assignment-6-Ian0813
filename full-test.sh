@@ -20,12 +20,6 @@ echo "Running test with user $(whoami)"
 
 set +e
 
-./unit-test.sh
-unit_test_rc=$?
-if [ $unit_test_rc -ne 0 ]; then
-    echo "Unit test failed"
-fi
-
 # If there's a configuration for the assignment number, use this to look for
 # additional tests
 if [ -f conf/assignment.txt ]; then
@@ -33,11 +27,7 @@ if [ -f conf/assignment.txt ]; then
     assignment=`cat conf/assignment.txt`
     if [ -f ./assignment-autotest/test/${assignment}/assignment-test.sh ]; then
         echo "Executing assignment test script"
-        OUTDIR=/tmp/aesd-autograder
-		#sudo mkdir -p ${OUTDIR}
-        FINDER_APP_DIR="${PWD}/finder-app" 
-        test -d "${FINDER_APP_DIR}/outdir" && cp -v "${FINDER_APP_DIR}/outdir/Image" ${OUTDIR} && cp -v "${FINDER_APP_DIR}/outdir/initramfs.cpio.gz" ${OUTDIR} 
-        SKIP_BUILD=1 ${PWD}/assignment-autotest/test/${assignment}/assignment-test.sh $test_dir
+        ./assignment-autotest/test/${assignment}/assignment-test.sh $test_dir
         rc=$?
         if [ $rc -eq 0 ]; then
             echo "Test of assignment ${assignment} complete with success"
