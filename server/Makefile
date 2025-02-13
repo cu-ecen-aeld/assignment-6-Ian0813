@@ -1,19 +1,21 @@
-CC=$(CROSS_COMPILE)gcc
-CUR_PATH=$(dir $(abspath $(MAKEFILE_LIST)))
-CFLAGS= -g 
+CC ?= $(CROSS_COMPILE)gcc
+CUR_PATH ?= $(dir $(abspath $(MAKEFILE_LIST)))
+CFLAGS ?= -g -Wall -Werror
 #-fsanitize=address,leak
-LDLIBS= -lm -lpthread -lrt
+LDFLAGS ?=
+LDLIBS ?= -lm -lpthread -lrt
+TARGET ?= aesdsocket
 #-lfile_manipulate -lsig_func
 SRC=$(wildcard $(CUR_PATH)/*.c)
 OBJS=$(SRC:.c=.o)
 
-.PHONY: all aesdsocket clean
+.PHONY: all $(TARGET) clean
 
 .DEFAULT_GOAL: all
 
-all: aesdsocket
+all: $(TARGET)
 
-aesdsocket: $(OBJS)
+$(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 clean:
