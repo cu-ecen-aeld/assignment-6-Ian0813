@@ -36,7 +36,7 @@ void signal_setup(int amount, ...) {
     va_list ap;
     struct sigaction sig_info = {0};
 
-    sigemptyset(&sig_info.sa_mask);
+    sigfillset(&sig_info.sa_mask);
     sig_info.sa_handler = signal_handler;
 
     va_start(ap, amount);
@@ -44,7 +44,6 @@ void signal_setup(int amount, ...) {
     while (amount-- > 0) {
 
         signum = va_arg(ap, int);
-        sigaddset(&sig_info.sa_mask, signum);
 
         if (sigaction(signum, &sig_info, NULL) == -1) {
             perror("sigaction ");

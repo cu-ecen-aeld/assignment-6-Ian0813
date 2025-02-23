@@ -29,6 +29,8 @@
 #include <signal.h>
 #include <errno.h>
 #include <pthread.h>
+#include <limits.h>
+#include <unistd.h>
 
 #define BSIZE (BUFSIZ * 3)
 #define FILE_NAME "/var/tmp/aesdsocketdata"
@@ -61,6 +63,24 @@ typedef struct thread {
     int fd;
 } tcp_thread;
 
+// To avoid aesdsocket-start-stop failing to stop the process due to a different process ID after the daemon function is invoked,
+// the pidfile needs to be updated after the daemon() function is successfully called.
+static void pidfile_overwrite(int rc) {
+
+    FILE *fd = NULL;
+    char buffer[MAX_INPUT] = {0};
+
+    if (!rc) {
+        if ((fd = fopen("/var/run/aesdsocket.pid", "w")) != NULL) {
+            sprintf(buffer, "%d", getpid());
+            fwrite(buffer, strlen(buffer), sizeof(char), fd);
+            USER_LOGGING("%s", "The aesdsocket pidfile has been overwritten.\n");
+            fclose(fd);
+        }
+    }
+    return;
+}
+
 void tcp_shutdown(int sockfd, int how) {
 
     if (shutdown(sockfd, how)) {
@@ -83,6 +103,7 @@ void tcp_close (int sockfd) {
 void tcp_set_nonblock(int sockfd, int invert) {
 
     int rc, flag;
+    (void) rc;
 
     flag = fcntl(sockfd, F_GETFL);
     if (!invert) {
@@ -127,6 +148,7 @@ int tcp_getopt(int argc, char *argv[]) {
             case 'd':
                 printf("Convert %s into daemon.\n", __FILE__);
                 rc = daemon(1, 0);
+                pidfile_overwrite(rc);
                 USER_LOGGING("Running as daemon: %d\n", rc);
                 return true;
         }
@@ -201,6 +223,7 @@ static void timer_writer(int sig) {
     ssize_t rc = 0;
     struct timespec now = {0};
     time_t diff = 0;
+    (void) diff;
 
     fprintf(stdout, "[%s] entered.\n", __func__);
 
@@ -356,8 +379,7 @@ static void thread_release(tcp_thread *head) {
 
 int main(int argc, char *argv[]) {
 
-    int tcp_sock = 0, conn_sock = 0, fd = 0, buflen = 0;
-    int rc = 0;
+    int tcp_sock = 0, conn_sock = 0, fd = 0;
     struct sockaddr_in conn_addr = {0};
     socklen_t addr_len = sizeof(struct sockaddr);
     pthread_mutex_t mutex;
