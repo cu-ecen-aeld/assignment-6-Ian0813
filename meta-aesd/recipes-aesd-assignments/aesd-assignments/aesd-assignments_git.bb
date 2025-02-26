@@ -9,7 +9,7 @@ SRC_URI = "git://git@github.com/cu-ecen-aeld/assignment-6-Ian0813.git;protocol=h
            file://aesdsocket-start-stop \
           "
 SRC_URI[sha256sum] = "eb6e82c6506039b7ef8fa5535f4334d02a683a42811a93455a5fa6131d338315"
-SRCREV = "65f5edbb689f294dc4fc490dcfa36053ab13b8a7"
+SRCREV = "4b45da03c2e01932be8d61644c907e486cfec84f"
 #BB_STRICT_CHECKSUM = "0"
 
 SRCPV = "${SRCREV}"
